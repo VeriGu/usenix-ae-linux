@@ -24,6 +24,11 @@
 #include <linux/kvm_host.h>
 #include <asm/kvm_emulate.h>
 #include <asm/esr.h>
+#ifdef CONFIG_STAGE2_KERNEL
+#include <asm/kvm_hyp.h>
+#include <asm/kvm_mmu.h>
+#include <asm/hypsec_vcpu.h>
+#endif
 
 #define PSTATE_FAULT_BITS_64 	(PSR_MODE_EL1h | PSR_A_BIT | PSR_F_BIT | \
 				 PSR_I_BIT | PSR_D_BIT)
@@ -60,6 +65,69 @@ static u64 get_except_vector(struct kvm_vcpu *vcpu, enum exception_type type)
 
 	return vcpu_read_sys_reg(vcpu, VBAR_EL1) + exc_offset + type;
 }
+#ifdef CONFIG_STAGE2_KERNEL
+static u64 __hyp_text hypsec_get_except_vector(struct shadow_vcpu_context *shadow_ctxt,
+					enum exception_type type)
+{
+	u64 exc_offset;
+
+	switch (*shadow_vcpu_cpsr(shadow_ctxt) & (PSR_MODE_MASK | PSR_MODE32_BIT)) {
+	case PSR_MODE_EL1t:
+		exc_offset = CURRENT_EL_SP_EL0_VECTOR;
+		break;
+	case PSR_MODE_EL1h:
+		exc_offset = CURRENT_EL_SP_ELx_VECTOR;
+		break;
+	case PSR_MODE_EL0t:
+		exc_offset = LOWER_EL_AArch64_VECTOR;
+		break;
+	default:
+		exc_offset = LOWER_EL_AArch32_VECTOR;
+	}
+
+	return shadow_ctxt->sys_regs[VBAR_EL1] + exc_offset + type;
+}
+#endif
+
+#ifdef CONFIG_STAGE2_KERNEL
+/* We only inject UNDEF fault to VM now. */
+void __hyp_text update_exception_gp_regs(struct shadow_vcpu_context *shadow_ctxt)
+{
+	struct kvm_regs *gp_regs;
+	unsigned long cpsr;
+	u64 flag;
+	u32 esr = 0;
+	bool is_aarch32;
+
+	flag = shadow_ctxt->dirty;
+	if (flag & PENDING_UNDEF_INJECT)
+		esr = (ESR_ELx_EC_UNKNOWN << ESR_ELx_EC_SHIFT);
+	else
+		BUG();
+
+	gp_regs = &shadow_ctxt->gp_regs;
+	cpsr = gp_regs->regs.pstate;
+	is_aarch32 = (cpsr & PSR_MODE32_BIT);
+
+	*__shadow_vcpu_elr_el1(shadow_ctxt) = gp_regs->regs.pc;
+
+	/* Setup cpsr temporarily before calling get_except_vector */
+	*shadow_vcpu_cpsr(shadow_ctxt) = cpsr;
+	gp_regs->regs.pc = hypsec_get_except_vector(shadow_ctxt, 0);
+	*shadow_vcpu_cpsr(shadow_ctxt) = 0;
+
+	gp_regs->regs.pstate = PSTATE_FAULT_BITS_64;
+	shadow_vcpu_write_spsr(shadow_ctxt, cpsr);
+
+	shadow_ctxt->sys_regs[ESR_EL1] = esr;
+}
+
+void __hyp_text hypsec_inject_undef(struct shadow_vcpu_context *shadow_ctxt)
+{
+	/* We currently support injecting UNDEF to 64-bit VM */
+	shadow_ctxt->dirty |= PENDING_UNDEF_INJECT;
+}
+#endif
 
 static void inject_abt64(struct kvm_vcpu *vcpu, bool is_iabt, unsigned long addr)
 {
@@ -186,3 +254,60 @@ void kvm_inject_vabt(struct kvm_vcpu *vcpu)
 {
 	pend_guest_serror(vcpu, ESR_ELx_ISV);
 }
+
+#ifdef CONFIG_STAGE2_KERNEL
+static u64 __hyp_text stage2_get_exception_vector(u64 pstate)
+{
+	u64 exc_offset;
+
+	switch (pstate & (PSR_MODE_MASK | PSR_MODE32_BIT)) {
+	case PSR_MODE_EL1t:
+		exc_offset = CURRENT_EL_SP_EL0_VECTOR;
+		break;
+	case PSR_MODE_EL1h:
+		exc_offset = CURRENT_EL_SP_ELx_VECTOR;
+		break;
+	case PSR_MODE_EL0t:
+		exc_offset = LOWER_EL_AArch64_VECTOR;
+		break;
+	default:
+		exc_offset = LOWER_EL_AArch32_VECTOR;
+	}
+
+	return read_sysreg(vbar_el1) + exc_offset;
+}
+
+/* Currently, we do not handle lower level fault from 32bit host */
+void __hyp_text stage2_inject_el1_fault(unsigned long addr)
+{
+	u64 pstate = read_sysreg(spsr_el2);
+	u32 esr = 0, esr_el2;
+	bool is_iabt = false;
+
+	write_sysreg(read_sysreg(elr_el2), elr_el1);
+	write_sysreg(stage2_get_exception_vector(pstate), elr_el2);
+
+	write_sysreg(addr, far_el1);
+	write_sysreg(PSTATE_FAULT_BITS_64, spsr_el2);
+	write_sysreg(pstate, spsr_el1);
+
+	esr_el2 = read_sysreg(esr_el2);
+	if ((esr_el2 << ESR_ELx_EC_SHIFT) == ESR_ELx_EC_IABT_LOW)
+		is_iabt = true;
+
+	/* To get fancier debug info that includes LR from the guest Linux,
+	 * we can intentionally comment out the EC_LOW_ABT case and always
+	 * inject the CUR mode exception.
+	 */
+	if ((pstate & PSR_MODE_MASK) == PSR_MODE_EL0t)
+		esr |= (ESR_ELx_EC_IABT_LOW << ESR_ELx_EC_SHIFT);
+	else
+		esr |= (ESR_ELx_EC_IABT_CUR << ESR_ELx_EC_SHIFT);
+
+	if (!is_iabt)
+		esr |= ESR_ELx_EC_DABT_LOW << ESR_ELx_EC_SHIFT;
+
+	esr |= ESR_ELx_FSC_EXTABT;
+	write_sysreg(esr, esr_el1);
+}
+#endif

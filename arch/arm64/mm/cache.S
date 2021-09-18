@@ -25,6 +25,11 @@
 #include <asm/alternative.h>
 #include <asm/asm-uaccess.h>
 
+#ifdef CONFIG_VERIFIED_KVM
+	.text
+	.pushsection	.hyp.text, "ax"
+#endif
+
 /*
  *	flush_icache_range(start,end)
  *
@@ -252,3 +257,6 @@ ENTRY(__dma_unmap_area)
 	b.ne	__dma_inv_area
 	ret
 ENDPIPROC(__dma_unmap_area)
+#ifdef CONFIG_VERIFIED_KVM
+	.popsection
+#endif

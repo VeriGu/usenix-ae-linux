@@ -32,13 +32,18 @@
 #include <asm/debug-monitors.h>
 #include <asm/processor.h>
 #include <asm/thread_info.h>
+#ifdef CONFIG_STAGE2_KERNEL
+#include <asm/hypsec_host.h>
+#endif
 
 /* Check whether the FP regs were dirtied while in the host-side run loop: */
 static bool __hyp_text update_fp_enabled(struct kvm_vcpu *vcpu)
 {
+#ifndef CONFIG_STAGE2_KERNEL
 	if (vcpu->arch.host_thread_info->flags & _TIF_FOREIGN_FPSTATE)
 		vcpu->arch.flags &= ~(KVM_ARM64_FP_ENABLED |
 				      KVM_ARM64_FP_HOST);
+#endif
 
 	return !!(vcpu->arch.flags & KVM_ARM64_FP_ENABLED);
 }
@@ -48,8 +53,12 @@ static void __hyp_text __fpsimd_save_fpexc32(struct kvm_vcpu *vcpu)
 {
 	if (!vcpu_el1_is_32bit(vcpu))
 		return;
-
+#ifndef CONFIG_STAGE2_KERNEL
 	vcpu->arch.ctxt.sys_regs[FPEXC32_EL2] = read_sysreg(fpexc32_el2);
+#else
+	vcpu->arch.shadow_vcpu_ctxt->sys_regs[FPEXC32_EL2] =
+						read_sysreg(fpexc32_el2);
+#endif
 }
 
 static void __hyp_text __activate_traps_fpsimd32(struct kvm_vcpu *vcpu)
@@ -71,6 +80,9 @@ static void __hyp_text __activate_traps_fpsimd32(struct kvm_vcpu *vcpu)
 
 static void __hyp_text __activate_traps_common(struct kvm_vcpu *vcpu)
 {
+#ifdef CONFIG_STAGE2_KERNEL
+	u64 mdcr_el2 = read_sysreg(mdcr_el2);
+#endif
 	/* Trap on AArch32 cp15 c15 (impdef sysregs) accesses (EL1 or EL0) */
 	write_sysreg(1 << 15, hstr_el2);
 
@@ -82,7 +94,19 @@ static void __hyp_text __activate_traps_common(struct kvm_vcpu *vcpu)
 	 */
 	write_sysreg(0, pmselr_el0);
 	write_sysreg(ARMV8_PMU_USERENR_MASK, pmuserenr_el0);
+#ifdef CONFIG_STAGE2_KERNEL
+	mdcr_el2 &= MDCR_EL2_HPMN_MASK;
+	mdcr_el2 |= (MDCR_EL2_TPM |
+		     MDCR_EL2_TPMS |
+		     MDCR_EL2_TPMCR |
+		     MDCR_EL2_TDRA |
+		     MDCR_EL2_TDOSA |
+		     MDCR_EL2_TDA |
+		     MDCR_EL2_TDE);
+	write_sysreg(mdcr_el2, mdcr_el2);
+#else
 	write_sysreg(vcpu->arch.mdcr_el2, mdcr_el2);
+#endif
 }
 
 static void __hyp_text __deactivate_traps_common(void)
@@ -123,6 +147,10 @@ static void __hyp_text __activate_traps_nvhe(struct kvm_vcpu *vcpu)
 static void __hyp_text __activate_traps(struct kvm_vcpu *vcpu)
 {
 	u64 hcr = vcpu->arch.hcr_el2;
+#ifdef CONFIG_STAGE2_KERNEL
+	hcr |= HCR_HYPSEC_VM_FLAGS;
+	hcr &= ~HCR_TGE;
+#endif
 
 	write_sysreg(hcr, hcr_el2);
 
@@ -154,7 +182,9 @@ static void __hyp_text __deactivate_traps_nvhe(void)
 	mdcr_el2 |= MDCR_EL2_E2PB_MASK << MDCR_EL2_E2PB_SHIFT;
 
 	write_sysreg(mdcr_el2, mdcr_el2);
+#ifndef CONFIG_STAGE2_KERNEL
 	write_sysreg(HCR_RW, hcr_el2);
+#endif
 	write_sysreg(CPTR_EL2_DEFAULT, cptr_el2);
 }
 
@@ -193,14 +223,24 @@ void deactivate_traps_vhe_put(void)
 	__deactivate_traps_common();
 }
 
+#ifndef CONFIG_STAGE2_KERNEL
 static void __hyp_text __activate_vm(struct kvm *kvm)
 {
 	write_sysreg(kvm->arch.vttbr, vttbr_el2);
 }
+#else
+static void __hyp_text __activate_vm(u64 vmid)
+{
+	u64 shadow_vttbr = get_shadow_vttbr((u32)vmid);
+	write_sysreg(shadow_vttbr, vttbr_el2);
+}
+#endif
 
 static void __hyp_text __deactivate_vm(struct kvm_vcpu *vcpu)
 {
+#ifndef CONFIG_STAGE2_KERNEL
 	write_sysreg(0, vttbr_el2);
+#endif
 }
 
 /* Save VGICv3 state on non-VHE systems */
@@ -264,13 +304,19 @@ static bool __hyp_text __translate_far_to_hpfar(u64 far, u64 *hpfar)
 	return true;
 }
 
+#ifndef CONFIG_STAGE2_KERNEL
 static bool __hyp_text __populate_fault_info(struct kvm_vcpu *vcpu)
+#else
+static bool __hyp_text __populate_fault_info(struct kvm_vcpu *vcpu, u64 esr)
+#endif
 {
 	u8 ec;
-	u64 esr;
 	u64 hpfar, far;
+#ifndef CONFIG_STAGE2_KERNEL
+	u64 esr;
 
 	esr = vcpu->arch.fault.esr_el2;
+#endif
 	ec = ESR_ELx_EC(esr);
 
 	if (ec != ESR_ELx_EC_DABT_LOW && ec != ESR_ELx_EC_IABT_LOW)
@@ -299,6 +345,23 @@ static bool __hyp_text __populate_fault_info(struct kvm_vcpu *vcpu)
 
 	vcpu->arch.fault.far_el2 = far;
 	vcpu->arch.fault.hpfar_el2 = hpfar;
+#ifdef CONFIG_STAGE2_KERNEL
+	if ((esr & ESR_ELx_FSC_TYPE) == FSC_FAULT) {
+		if (pre_handle_shadow_s2pt_fault(vcpu, hpfar) > 0)
+			return false;
+		/*
+		 * Here we'd like to avoid calling handle_shadow_s2pt_fault
+		 * twice if it's GPA belongs to MMIO region. Since no mapping
+		 * should be built anyway.
+		 */
+		else if (!is_mmio_gpa((hpfar & HPFAR_MASK) << 8)) {
+			vcpu->arch.shadow_vcpu_ctxt->hpfar = hpfar;
+			el2_memset(&vcpu->arch.walk_result, 0,
+					sizeof(struct s2_trans));
+		}
+	}
+#endif
+
 	return true;
 }
 
@@ -308,6 +371,7 @@ static bool __hyp_text __populate_fault_info(struct kvm_vcpu *vcpu)
  */
 static bool __hyp_text __skip_instr(struct kvm_vcpu *vcpu)
 {
+#ifndef CONFIG_STAGE2_KERNEL
 	*vcpu_pc(vcpu) = read_sysreg_el2(elr);
 
 	if (vcpu_mode_is_32bit(vcpu)) {
@@ -319,6 +383,19 @@ static bool __hyp_text __skip_instr(struct kvm_vcpu *vcpu)
 	}
 
 	write_sysreg_el2(*vcpu_pc(vcpu), elr);
+#else
+	*shadow_vcpu_pc(vcpu) = read_sysreg_el2(elr);
+
+	if (shadow_vcpu_mode_is_32bit(vcpu)) {
+		vcpu->arch.shadow_vcpu_ctxt->gp_regs.regs.pstate = read_sysreg_el2(spsr);
+		kvm_skip_instr32(vcpu, kvm_vcpu_trap_il_is32bit(vcpu));
+		write_sysreg_el2(vcpu->arch.shadow_vcpu_ctxt->gp_regs.regs.pstate, spsr);
+	} else {
+		*shadow_vcpu_pc(vcpu) += 4;
+	}
+
+	write_sysreg_el2(*shadow_vcpu_pc(vcpu), elr);
+#endif
 
 	if (vcpu->guest_debug & KVM_GUESTDBG_SINGLESTEP) {
 		vcpu->arch.fault.esr_el2 =
@@ -331,7 +408,12 @@ static bool __hyp_text __skip_instr(struct kvm_vcpu *vcpu)
 
 static bool __hyp_text __hyp_switch_fpsimd(struct kvm_vcpu *vcpu)
 {
+#ifndef CONFIG_STAGE2_KERNEL
 	struct user_fpsimd_state *host_fpsimd = vcpu->arch.host_fpsimd_state;
+#else
+	struct kvm_cpu_context *host_ctxt = kern_hyp_va(vcpu->arch.host_cpu_context);
+	struct user_fpsimd_state *host_fpsimd = &host_ctxt->gp_regs.fp_regs;
+#endif
 
 	if (has_vhe())
 		write_sysreg(read_sysreg(cpacr_el1) | CPACR_EL1_FPEN,
@@ -360,12 +442,18 @@ static bool __hyp_text __hyp_switch_fpsimd(struct kvm_vcpu *vcpu)
 
 		vcpu->arch.flags &= ~KVM_ARM64_FP_HOST;
 	}
-
+#ifndef CONFIG_STAGE2_KERNEL
 	__fpsimd_restore_state(&vcpu->arch.ctxt.gp_regs.fp_regs);
-
+#else
+	__fpsimd_restore_state(&vcpu->arch.shadow_vcpu_ctxt->gp_regs.fp_regs);
+#endif
 	/* Skip restoring fpexc32 for AArch64 guests */
 	if (!(read_sysreg(hcr_el2) & HCR_RW))
+#ifndef CONFIG_STAGE2_KERNEL
 		write_sysreg(vcpu->arch.ctxt.sys_regs[FPEXC32_EL2],
+#else
+		write_sysreg(vcpu->arch.shadow_vcpu_ctxt->sys_regs[FPEXC32_EL2],
+#endif
 			     fpexc32_el2);
 
 	vcpu->arch.flags |= KVM_ARM64_FP_ENABLED;
@@ -380,8 +468,18 @@ static bool __hyp_text __hyp_switch_fpsimd(struct kvm_vcpu *vcpu)
  */
 static bool __hyp_text fixup_guest_exit(struct kvm_vcpu *vcpu, u64 *exit_code)
 {
-	if (ARM_EXCEPTION_CODE(*exit_code) != ARM_EXCEPTION_IRQ)
+#ifdef CONFIG_STAGE2_KERNEL
+	u32 esr_el2 = 0;
+#endif
+	if (ARM_EXCEPTION_CODE(*exit_code) != ARM_EXCEPTION_IRQ) {
+#ifndef CONFIG_STAGE2_KERNEL
 		vcpu->arch.fault.esr_el2 = read_sysreg_el2(esr);
+#else
+		esr_el2 = read_sysreg_el2(esr);
+		vcpu->arch.fault.esr_el2 = esr_el2;
+		vcpu->arch.shadow_vcpu_ctxt->esr = esr_el2;
+#endif
+	}
 
 	/*
 	 * We're using the raw exception code in order to only process
@@ -399,20 +497,40 @@ static bool __hyp_text fixup_guest_exit(struct kvm_vcpu *vcpu, u64 *exit_code)
 	 * undefined instruction exception to the guest.
 	 */
 	if (system_supports_fpsimd() &&
+#ifndef CONFIG_STAGE2_KERNEL
 	    kvm_vcpu_trap_get_class(vcpu) == ESR_ELx_EC_FP_ASIMD)
+#else
+	    hypsec_vcpu_trap_get_class(vcpu) == ESR_ELx_EC_FP_ASIMD)
+#endif
 		return __hyp_switch_fpsimd(vcpu);
 
+#ifndef CONFIG_STAGE2_KERNEL
 	if (!__populate_fault_info(vcpu))
+#else
+	if (!__populate_fault_info(vcpu, esr_el2))
+#endif
 		return true;
+
+#ifdef CONFIG_STAGE2_KERNEL
+	if (*exit_code == ARM_EXCEPTION_TRAP &&
+	   hypsec_vcpu_trap_get_class(vcpu) == ESR_ELx_EC_HVC64) {
+		if (handle_pvops(vcpu) > 0)
+			return true;
+	}
+#endif
 
 	if (static_branch_unlikely(&vgic_v2_cpuif_trap)) {
 		bool valid;
 
+#ifndef CONFIG_STAGE2_KERNEL
 		valid = kvm_vcpu_trap_get_class(vcpu) == ESR_ELx_EC_DABT_LOW &&
 			kvm_vcpu_trap_get_fault_type(vcpu) == FSC_FAULT &&
 			kvm_vcpu_dabt_isvalid(vcpu) &&
 			!kvm_vcpu_dabt_isextabt(vcpu) &&
 			!kvm_vcpu_dabt_iss1tw(vcpu);
+#else
+		valid = hypsec_is_vgic_v2_cpuif_trap(vcpu, esr_el2);
+#endif
 
 		if (valid) {
 			int ret = __vgic_v2_perform_cpuif_access(vcpu);
@@ -428,7 +546,11 @@ static bool __hyp_text fixup_guest_exit(struct kvm_vcpu *vcpu, u64 *exit_code)
 				 * do after dealing with the error.
 				 */
 				if (!__skip_instr(vcpu))
+#ifndef CONFIG_STAGE2_KERNEL
 					*vcpu_cpsr(vcpu) &= ~DBG_SPSR_SS;
+#else
+					*shadow_vcpu_cpsr(vcpu) &= ~DBG_SPSR_SS;
+#endif
 				*exit_code = ARM_EXCEPTION_EL1_SERROR;
 			}
 
@@ -437,8 +559,13 @@ static bool __hyp_text fixup_guest_exit(struct kvm_vcpu *vcpu, u64 *exit_code)
 	}
 
 	if (static_branch_unlikely(&vgic_v3_cpuif_trap) &&
+#ifndef CONFIG_STAGE2_KERNEL
 	    (kvm_vcpu_trap_get_class(vcpu) == ESR_ELx_EC_SYS64 ||
 	     kvm_vcpu_trap_get_class(vcpu) == ESR_ELx_EC_CP15_32)) {
+#else
+	    (hypsec_vcpu_trap_get_class(vcpu) == ESR_ELx_EC_SYS64 ||
+	     hypsec_vcpu_trap_get_class(vcpu) == ESR_ELx_EC_CP15_32)) {
+#endif
 		int ret = __vgic_v3_perform_cpuif_access(vcpu);
 
 		if (ret == 1 && __skip_instr(vcpu))
@@ -483,6 +610,15 @@ static void __hyp_text __set_host_arch_workaround_state(struct kvm_vcpu *vcpu)
 #endif
 }
 
+#ifdef CONFIG_STAGE2_KERNEL
+static void __hyp_text __host_el2_restore_state(struct el2_data *el2_data)
+{
+	write_sysreg(el2_data->host_vttbr, vttbr_el2);
+	write_sysreg(HCR_HOST_NVHE_FLAGS, hcr_el2);
+	write_sysreg(0, tpidr_el2);
+}
+#endif
+
 /* Switch to the guest for VHE systems running in EL2 */
 int kvm_vcpu_run_vhe(struct kvm_vcpu *vcpu)
 {
@@ -497,7 +633,9 @@ int kvm_vcpu_run_vhe(struct kvm_vcpu *vcpu)
 	sysreg_save_host_state_vhe(host_ctxt);
 
 	__activate_traps(vcpu);
+#ifndef CONFIG_STAGE2_KERNEL
 	__activate_vm(vcpu->kvm);
+#endif
 
 	sysreg_restore_guest_state_vhe(guest_ctxt);
 	__debug_switch_to_guest(vcpu);
@@ -528,22 +666,47 @@ int kvm_vcpu_run_vhe(struct kvm_vcpu *vcpu)
 }
 
 /* Switch to the guest for legacy non-VHE systems */
+#ifndef CONFIG_STAGE2_KERNEL
 int __hyp_text __kvm_vcpu_run_nvhe(struct kvm_vcpu *vcpu)
+#else
+int __hyp_text __kvm_vcpu_run_nvhe(struct kvm_vcpu *vcpu,
+				   struct shadow_vcpu_context *prot_ctxt)
+#endif
 {
+	u64 exit_code;
 	struct kvm_cpu_context *host_ctxt;
 	struct kvm_cpu_context *guest_ctxt;
-	u64 exit_code;
+#ifdef CONFIG_STAGE2_KERNEL
+	struct kvm_cpu_context *shadow_ctxt;
+	struct el2_data *el2_data;
+	u32 vmid = vcpu->arch.vmid;
+	el2_data = kern_hyp_va(kvm_ksym_ref(el2_data_start));
+#endif
 
+#ifndef CONFIG_STAGE2_KERNEL
 	vcpu = kern_hyp_va(vcpu);
+#endif
 
 	host_ctxt = kern_hyp_va(vcpu->arch.host_cpu_context);
 	host_ctxt->__hyp_running_vcpu = vcpu;
 	guest_ctxt = &vcpu->arch.ctxt;
+#ifdef CONFIG_STAGE2_KERNEL
+	shadow_ctxt =
+		(struct kvm_cpu_context *)prot_ctxt;
+#endif
 
 	__sysreg_save_state_nvhe(host_ctxt);
 
+#ifdef CONFIG_STAGE2_KERNEL
+	write_sysreg(vcpu->arch.tpidr_el2, tpidr_el2);
+	__restore_shadow_kvm_regs(vcpu);
+#endif
 	__activate_traps(vcpu);
+#ifndef CONFIG_STAGE2_KERNEL
 	__activate_vm(kern_hyp_va(vcpu->kvm));
+#else
+	__activate_vm(vmid & 0xff);
+#endif
 
 	__hyp_vgic_restore_state(vcpu);
 	__timer_enable_traps(vcpu);
@@ -553,8 +716,12 @@ int __hyp_text __kvm_vcpu_run_nvhe(struct kvm_vcpu *vcpu)
 	 * to erratum #852523 (Cortex-A57) or #853709 (Cortex-A72).
 	 */
 	__sysreg32_restore_state(vcpu);
+#ifndef CONFIG_STAGE2_KERNEL
 	__sysreg_restore_state_nvhe(guest_ctxt);
 	__debug_switch_to_guest(vcpu);
+#else
+	__sysreg_restore_state_nvhe(shadow_ctxt);
+#endif
 
 	__set_guest_arch_workaround_state(vcpu);
 
@@ -567,24 +734,44 @@ int __hyp_text __kvm_vcpu_run_nvhe(struct kvm_vcpu *vcpu)
 
 	__set_host_arch_workaround_state(vcpu);
 
+#ifndef CONFIG_STAGE2_KERNEL
 	__sysreg_save_state_nvhe(guest_ctxt);
+#else
+	__sysreg_save_state_nvhe(shadow_ctxt);
+#endif
 	__sysreg32_save_state(vcpu);
 	__timer_disable_traps(vcpu);
 	__hyp_vgic_save_state(vcpu);
 
 	__deactivate_traps(vcpu);
 	__deactivate_vm(vcpu);
+#ifdef CONFIG_STAGE2_KERNEL
+	__host_el2_restore_state(el2_data);
+#endif
 
 	__sysreg_restore_state_nvhe(host_ctxt);
 
-	if (vcpu->arch.flags & KVM_ARM64_FP_ENABLED)
+	if (vcpu->arch.flags & KVM_ARM64_FP_ENABLED) {
 		__fpsimd_save_fpexc32(vcpu);
+#ifdef CONFIG_STAGE2_KERNEL
+		__fpsimd_save_state(&shadow_ctxt->gp_regs.fp_regs);
+		__fpsimd_restore_state(&host_ctxt->gp_regs.fp_regs);
+		vcpu->arch.flags &= ~KVM_ARM64_FP_ENABLED;
+		vcpu->arch.flags |= KVM_ARM64_FP_HOST;
+#endif
+	}
+
+#ifdef CONFIG_STAGE2_KERNEL
+	__save_shadow_kvm_regs(vcpu, exit_code);
+#endif
 
 	/*
 	 * This must come after restoring the host sysregs, since a non-VHE
 	 * system may enable SPE here and make use of the TTBRs.
 	 */
+#ifndef CONFIG_STAGE2_KERNEL
 	__debug_switch_to_host(vcpu);
+#endif
 
 	return exit_code;
 }
@@ -596,6 +783,9 @@ static void __hyp_text __hyp_call_panic_nvhe(u64 spsr, u64 elr, u64 par,
 {
 	struct kvm_vcpu *vcpu;
 	unsigned long str_va;
+#ifdef CONFIG_STAGE2_KERNEL
+	struct el2_data *el2_data = kern_hyp_va(kvm_ksym_ref(el2_data_start));
+#endif
 
 	vcpu = __host_ctxt->__hyp_running_vcpu;
 
@@ -604,6 +794,9 @@ static void __hyp_text __hyp_call_panic_nvhe(u64 spsr, u64 elr, u64 par,
 		__deactivate_traps(vcpu);
 		__deactivate_vm(vcpu);
 		__sysreg_restore_state_nvhe(__host_ctxt);
+#ifdef CONFIG_STAGE2_KERNEL
+		__host_el2_restore_state(el2_data);
+#endif
 	}
 
 	/*

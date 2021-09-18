@@ -87,6 +87,13 @@
 			 HCR_FMO | HCR_IMO)
 #define HCR_VIRT_EXCP_MASK (HCR_VSE | HCR_VI | HCR_VF)
 #define HCR_HOST_VHE_FLAGS (HCR_RW | HCR_TGE | HCR_E2H)
+#ifdef CONFIG_VERIFIED_KVM
+#define HCR_HOST_NVHE_FLAGS (HCR_RW | HCR_AMO | HCR_VM)
+#define HCR_HYPSEC_VM_FLAGS (HCR_TSC | HCR_TSW | HCR_TWE | HCR_TWI | HCR_VM | \
+			     HCR_BSU_IS | HCR_FB | HCR_TAC | \
+			     HCR_AMO | HCR_SWIO | HCR_TIDCP | HCR_RW | HCR_TLOR | \
+			     HCR_FMO | HCR_IMO)
+#endif
 
 /* TCR_EL2 Registers bits */
 #define TCR_EL2_RES1		((1 << 31) | (1 << 23))
@@ -120,6 +127,7 @@
 #define VTCR_EL2_SL0_SHIFT	6
 #define VTCR_EL2_SL0_MASK	(3 << VTCR_EL2_SL0_SHIFT)
 #define VTCR_EL2_SL0_LVL1	(1 << VTCR_EL2_SL0_SHIFT)
+#define VTCR_EL2_SL0_LVL0	(1 << (VTCR_EL2_SL0_SHIFT + 1))
 #define VTCR_EL2_T0SZ_MASK	0x3f
 #define VTCR_EL2_T0SZ_40B	24
 #define VTCR_EL2_VS_SHIFT	19
@@ -168,6 +176,7 @@
  * 3 level page tables (SL = 1)
  */
 #define VTCR_EL2_TGRAN_FLAGS		(VTCR_EL2_TG0_4K | VTCR_EL2_SL0_LVL1)
+#define VTCR_EL2_TGRAN_FLAGS1		(VTCR_EL2_TG0_4K | VTCR_EL2_SL0_LVL0)
 #define VTTBR_X_TGRAN_MAGIC		37
 #endif
 
@@ -204,6 +213,11 @@
 #define MDCR_EL2_TPM		(1 << 6)
 #define MDCR_EL2_TPMCR		(1 << 5)
 #define MDCR_EL2_HPMN_MASK	(0x1F)
+#ifdef CONFIG_VERIFIED_KVM
+#define HYPSEC_MDCR_EL2_FLAG	(MDCR_EL2_TPM | MDCR_EL2_TPMS | MDCR_EL2_TPMCR | \
+				MDCR_EL2_TDRA | MDCR_EL2_TDOSA | MDCR_EL2_TDA | \
+				MDCR_EL2_TDE)
+#endif
 
 /* For compatibility with fault code shared with 32-bit */
 #define FSC_FAULT	ESR_ELx_FSC_FAULT

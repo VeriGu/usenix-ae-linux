@@ -215,6 +215,11 @@ SECTIONS
 
 	BSS_SECTION(0, 0, 0)
 
+#ifndef CONFIG_VERIFIED_KVM
+	. = ALIGN(PAGE_SIZE);
+#else
+	. = ALIGN(SEGMENT_ALIGN);
+#endif
 	. = ALIGN(PAGE_SIZE);
 	idmap_pg_dir = .;
 	. += IDMAP_DIR_SIZE;
@@ -231,6 +236,34 @@ SECTIONS
 	swapper_pg_dir = .;
 	. += SWAPPER_DIR_SIZE;
 	swapper_pg_end = .;
+#ifdef CONFIG_VERIFIED_KVM
+	. = ALIGN(SEGMENT_ALIGN);
+	dtb_copy_start = .;
+	. += SZ_2M * 4;
+	dtb_copy_end =.;
+
+	stage2_pgs_start = .;
+	. += STAGE2_PAGES_SIZE;
+	stage2_pgs_end = .;
+
+	smmu_pgs_start = .;
+	. += SMMU_PAGES_SIZE;
+	smmu_pgs_end = .;
+
+	stage2_tmp_pgs_start = .;
+	. += PAGE_SIZE;
+	stage2_tmp_pgs_end = .;
+
+	. = ALIGN(PAGE_SIZE);
+	el2_data_start = .;
+	. += CORE_DATA_SIZE;
+	el2_data_end = .;
+
+	. = ALIGN(PAGE_SIZE);
+	shared_data_start = .;
+	. += PAGE_SIZE * (PAGE_SIZE * 4);
+	shared_data_end = .;
+#endif
 
 	__pecoff_data_size = ABSOLUTE(. - __initdata_begin);
 	_end = .;

@@ -152,7 +152,11 @@ bool __fpsimd_enabled(void);
 void activate_traps_vhe_load(struct kvm_vcpu *vcpu);
 void deactivate_traps_vhe_put(void);
 
+#ifndef CONFIG_VERIFIED_KVM
 u64 __guest_enter(struct kvm_vcpu *vcpu, struct kvm_cpu_context *host_ctxt);
+#else
+u64 __guest_enter(struct kvm_cpu_context *vcpu_ctxt, struct kvm_cpu_context *host_ctxt);
+#endif
 void __noreturn __hyp_do_panic(unsigned long, ...);
 
 #endif /* __ARM64_KVM_HYP_H__ */

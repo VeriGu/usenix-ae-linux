@@ -1328,7 +1328,7 @@ static bool vfio_iommu_has_sw_msi(struct iommu_group *group, phys_addr_t *base)
 }
 
 static int vfio_iommu_type1_attach_group(void *iommu_data,
-					 struct iommu_group *iommu_group)
+					 struct iommu_group *iommu_group, int vmid)
 {
 	struct vfio_iommu *iommu = iommu_data;
 	struct vfio_group *group;
@@ -1402,6 +1402,7 @@ static int vfio_iommu_type1_attach_group(void *iommu_data,
 			goto out_domain;
 	}
 
+	domain->domain->vmid = vmid;
 	ret = iommu_attach_group(domain->domain, iommu_group);
 	if (ret)
 		goto out_domain;

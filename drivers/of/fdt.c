@@ -1326,7 +1326,7 @@ static int __init of_fdt_raw_init(void)
 	of_fdt_raw_attr.size = fdt_totalsize(initial_boot_params);
 	return sysfs_create_bin_file(firmware_kobj, &of_fdt_raw_attr);
 }
-late_initcall(of_fdt_raw_init);
+device_initcall(of_fdt_raw_init);
 #endif
 
 #endif /* CONFIG_OF_EARLY_FLATTREE */

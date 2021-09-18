@@ -56,8 +56,13 @@ ENDPROC(__hyp_stub_vectors)
 
 el1_sync:
 	cmp	x0, #HVC_SET_VECTORS
-	b.ne	2f
+	b.ne	1f
 	msr	vbar_el2, x1
+	b	9f
+
+1:	cmp	x0, #HVC_GET_VECTORS
+	b.ne	2f
+	mrs	x0, vbar_el2
 	b	9f
 
 2:	cmp	x0, #HVC_SOFT_RESTART
@@ -114,6 +119,14 @@ ENDPROC(\label)
  * so you will need to set that to something sensible at the new hypervisor's
  * initialisation entry point.
  */
+
+ENTRY(__hyp_get_vectors)
+	str	lr, [sp, #-16]!
+	mov	x0, #HVC_GET_VECTORS
+	hvc	#0
+	ldr	lr, [sp], #16
+	ret
+ENDPROC(__hyp_get_vectors)
 
 ENTRY(__hyp_set_vectors)
 	mov	x1, x0

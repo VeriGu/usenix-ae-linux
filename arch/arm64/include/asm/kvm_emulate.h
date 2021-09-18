@@ -86,6 +86,23 @@ static inline void vcpu_set_vsesr(struct kvm_vcpu *vcpu, u64 vsesr)
 	vcpu->arch.vsesr_el2 = vsesr;
 }
 
+#if 0 
+static inline unsigned long *shadow_vcpu_pc(struct shadow_vcpu_context *shadow_ctxt)
+{
+	return (unsigned long *)&vcpu_shadow_gp_regs(shadow_ctxt)->regs.pc;
+}
+
+static inline unsigned long *shadow_vcpu_cpsr(struct shadow_vcpu_context *shadow_ctxt)
+{
+	return (unsigned long *)&vcpu_shadow_gp_regs(shadow_ctxt)->regs.pstate;
+}
+
+static inline unsigned long *__shadow_vcpu_elr_el1(struct shadow_vcpu_context *shadow_ctxt)
+{
+	return (unsigned long *)&vcpu_shadow_gp_regs(shadow_ctxt)->elr_el1;
+}
+#endif
+
 static inline unsigned long *vcpu_pc(const struct kvm_vcpu *vcpu)
 {
 	return (unsigned long *)&vcpu_gp_regs(vcpu)->regs.pc;
@@ -160,6 +177,27 @@ static inline void vcpu_set_reg(struct kvm_vcpu *vcpu, u8 reg_num,
 	if (reg_num != 31)
 		vcpu_gp_regs(vcpu)->regs.regs[reg_num] = val;
 }
+
+#if 0 
+static inline unsigned long shadow_vcpu_get_reg(struct shadow_vcpu_context *shadow_ctxt,
+                                                u8 reg_num)
+{
+	return (reg_num == 31) ? 0 : vcpu_shadow_gp_regs(shadow_ctxt)->regs.regs[reg_num];
+}
+
+static inline void shadow_vcpu_set_reg(struct shadow_vcpu_context *shadow_ctxt,
+				       u8 reg_num, unsigned long val)
+{
+	if (reg_num != 31)
+		vcpu_shadow_gp_regs(shadow_ctxt)->regs.regs[reg_num] = val;
+}
+
+static inline void shadow_vcpu_write_spsr(struct shadow_vcpu_context *shadow_ctxt,
+					  unsigned long v)
+{
+	vcpu_shadow_gp_regs(shadow_ctxt)->spsr[KVM_SPSR_EL1] = v;
+}
+#endif
 
 static inline unsigned long vcpu_read_spsr(const struct kvm_vcpu *vcpu)
 {
@@ -295,10 +333,43 @@ static inline u8 kvm_vcpu_trap_get_fault_type(const struct kvm_vcpu *vcpu)
 {
 	return kvm_vcpu_get_hsr(vcpu) & ESR_ELx_FSC_TYPE;
 }
+#ifdef CONFIG_VERIFIED_KVM
+static inline u8 hypsec_vcpu_trap_get_class(struct shadow_vcpu_context *shadow_ctxt)
+{
+	return ESR_ELx_EC(shadow_ctxt->esr);
+}
 
+static inline int hypsec_vcpu_dabt_get_rd(struct shadow_vcpu_context *shadow_ctxt)
+{
+	return (shadow_ctxt->esr & ESR_ELx_SRT_MASK) >> ESR_ELx_SRT_SHIFT;
+}
+
+static inline bool hypsec_vcpu_dabt_iss1tw(u32 hsr)
+{
+	return !!(hsr & ESR_ELx_S1PTW);
+}
+
+static inline bool hypsec_vcpu_dabt_iswrite(struct shadow_vcpu_context *shadow_ctxt)
+{
+	return !!(shadow_ctxt->esr & ESR_ELx_WNR) ||
+		hypsec_vcpu_dabt_iss1tw(shadow_ctxt->esr); /* AF/DBM update */
+}
+
+static inline bool hypsec_vcpu_trap_is_iabt(struct shadow_vcpu_context *shadow_ctxt)
+{
+	return hypsec_vcpu_trap_get_class(shadow_ctxt) == ESR_ELx_EC_IABT_LOW;
+}
+
+static inline bool kvm_vcpu_dabt_isextabt(const struct kvm_vcpu *vcpu, u8 fault)
+{
+	if (!fault)
+		fault = kvm_vcpu_trap_get_fault(vcpu);
+	switch (fault) {
+#else
 static inline bool kvm_vcpu_dabt_isextabt(const struct kvm_vcpu *vcpu)
 {
 	switch (kvm_vcpu_trap_get_fault(vcpu)) {
+#endif
 	case FSC_SEA:
 	case FSC_SEA_TTW0:
 	case FSC_SEA_TTW1:
@@ -407,4 +478,16 @@ static inline unsigned long vcpu_data_host_to_guest(struct kvm_vcpu *vcpu,
 	return data;		/* Leave LE untouched */
 }
 
+#ifdef CONFIG_VERIFIED_KVM
+#if 0
+static inline bool hypsec_is_vgic_v2_cpuif_trap(struct kvm_vcpu *vcpu, u32 esr)
+{
+	return (hypsec_vcpu_trap_get_class(vcpu) == ESR_ELx_EC_DABT_LOW &&
+	       (esr & ESR_ELx_FSC_TYPE) == FSC_FAULT &&
+	       (esr & ESR_ELx_ISV) &&
+	       !kvm_vcpu_dabt_isextabt(vcpu, (esr & ESR_ELx_FSC)) &&
+	       !(esr & ESR_ELx_S1PTW));
+}
+#endif
+#endif
 #endif /* __ARM64_KVM_EMULATE_H__ */

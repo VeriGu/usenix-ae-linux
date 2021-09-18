@@ -13,7 +13,9 @@
 #include <asm/kvm_host.h>
 #include <asm/kvm_mmu.h>
 #include <asm/sysreg.h>
-
+#ifdef CONFIG_VERIFIED_KVM
+#include <asm/hypsec_host.h>
+#endif
 /*
  * Called on entry to KVM_RUN unless this vcpu previously ran at least
  * once and the most recent prior KVM_RUN for this vcpu was called from
@@ -23,6 +25,7 @@
  * such that on entering hyp the relevant parts of current are already
  * mapped.
  */
+#ifndef CONFIG_VERIFIED_KVM
 int kvm_arch_vcpu_run_map_fp(struct kvm_vcpu *vcpu)
 {
 	int ret;
@@ -47,6 +50,12 @@ int kvm_arch_vcpu_run_map_fp(struct kvm_vcpu *vcpu)
 error:
 	return ret;
 }
+#else
+int kvm_arch_vcpu_run_map_fp(struct kvm_vcpu *vcpu)
+{
+	return 0;
+}
+#endif
 
 /*
  * Prepare vcpu for saving the host's FPSIMD state and loading the guest's.

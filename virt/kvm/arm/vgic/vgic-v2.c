@@ -19,6 +19,9 @@
 #include <linux/kvm_host.h>
 #include <kvm/arm_vgic.h>
 #include <asm/kvm_mmu.h>
+#ifdef CONFIG_VERIFIED_KVM
+#include <asm/hypsec_host.h>
+#endif
 
 #include "vgic.h"
 
@@ -414,6 +417,9 @@ int vgic_v2_probe(const struct gic_kvm_info *info)
 	kvm_vgic_global_state.vcpu_base = info->vcpu.start;
 	kvm_vgic_global_state.type = VGIC_V2;
 	kvm_vgic_global_state.max_gic_vcpus = VGIC_V2_MAX_CPUS;
+#ifdef CONFIG_VERIFIED_KVM
+	el2_init_vgic_cpu_base(info->vcpu.start);
+#endif
 
 	kvm_debug("vgic-v2@%llx\n", info->vctrl.start);
 

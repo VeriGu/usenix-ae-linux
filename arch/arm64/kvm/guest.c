@@ -294,6 +294,11 @@ int __attribute_const__ kvm_target_cpu(void)
 	unsigned long implementor = read_cpuid_implementor();
 	unsigned long part_number = read_cpuid_part_number();
 
+#ifdef CONFIG_VERIFIED_KVM
+	implementor = ARM_CPU_IMP_ARM;
+	part_number = 0;
+#endif
+
 	switch (implementor) {
 	case ARM_CPU_IMP_ARM:
 		switch (part_number) {

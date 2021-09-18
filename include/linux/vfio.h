@@ -72,7 +72,7 @@ struct vfio_iommu_driver_ops {
 				 unsigned long arg);
 	int		(*mmap)(void *iommu_data, struct vm_area_struct *vma);
 	int		(*attach_group)(void *iommu_data,
-					struct iommu_group *group);
+					struct iommu_group *group, int vmid);
 	void		(*detach_group)(void *iommu_data,
 					struct iommu_group *group);
 	int		(*pin_pages)(void *iommu_data, unsigned long *user_pfn,

@@ -196,7 +196,7 @@ static long vfio_noiommu_ioctl(void *iommu_data,
 }
 
 static int vfio_noiommu_attach_group(void *iommu_data,
-				     struct iommu_group *iommu_group)
+				     struct iommu_group *iommu_group, int vmid)
 {
 	return iommu_group_get_iommudata(iommu_group) == &noiommu ? 0 : -EINVAL;
 }
@@ -1072,13 +1072,13 @@ static long vfio_ioctl_check_extension(struct vfio_container *container,
 /* hold write lock on container->group_lock */
 static int __vfio_container_attach_groups(struct vfio_container *container,
 					  struct vfio_iommu_driver *driver,
-					  void *data)
+					  void *data, int vmid)
 {
 	struct vfio_group *group;
 	int ret = -ENODEV;
 
 	list_for_each_entry(group, &container->group_list, container_next) {
-		ret = driver->ops->attach_group(data, group->iommu_group);
+		ret = driver->ops->attach_group(data, group->iommu_group, vmid);
 		if (ret)
 			goto unwind;
 	}
@@ -1099,6 +1099,10 @@ static long vfio_ioctl_set_iommu(struct vfio_container *container,
 {
 	struct vfio_iommu_driver *driver;
 	long ret = -ENODEV;
+#ifdef CONFIG_VERIFIED_KVM
+	int vmid = arg >> 2;
+	arg &= 0x3;
+#endif
 
 	down_write(&container->group_lock);
 
@@ -1150,7 +1154,11 @@ static long vfio_ioctl_set_iommu(struct vfio_container *container,
 			continue;
 		}
 
+#ifndef CONFIG_VERIFIED_KVM
 		ret = __vfio_container_attach_groups(container, driver, data);
+#else
+		ret = __vfio_container_attach_groups(container, driver, data, vmid);
+#endif
 		if (ret) {
 			driver->ops->release(data);
 			module_put(driver->ops->owner);
@@ -1399,7 +1407,7 @@ static int vfio_group_set_container(struct vfio_group *group, int container_fd)
 	driver = container->iommu_driver;
 	if (driver) {
 		ret = driver->ops->attach_group(container->iommu_data,
-						group->iommu_group);
+						group->iommu_group, 0);
 		if (ret)
 			goto unlock_out;
 	}

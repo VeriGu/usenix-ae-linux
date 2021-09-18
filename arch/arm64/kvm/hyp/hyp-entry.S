@@ -29,6 +29,71 @@
 	.text
 	.pushsection	.hyp.text, "ax"
 
+#ifdef CONFIG_VERIFIED_KVM
+.macro save_callee_saved_regs
+	stp	lr, xzr,   [sp, #-16]!
+	stp	x28, x29, [sp, #-16]!
+	stp	x26, x27, [sp, #-16]!
+	stp	x24, x25, [sp, #-16]!
+	stp	x22, x23, [sp, #-16]!
+	stp	x20, x21, [sp, #-16]!
+	stp	x18, x19, [sp, #-16]!
+	stp	x16, x17, [sp, #-16]!
+	stp	x14, x15, [sp, #-16]!
+	stp	x12, x13, [sp, #-16]!
+	stp	x10, x11, [sp, #-16]!
+	stp	x8, x9,   [sp, #-16]!
+	stp	x6, x7,   [sp, #-16]!
+	stp	x4, x5,   [sp, #-16]!
+	stp	x2, x3,   [sp, #-16]!
+	stp	x0, x1,   [sp, #-16]!
+.endm
+
+.macro restore_callee_saved_regs
+	ldp	x0, x1,   [sp], #16
+	ldp	x2, x3,   [sp], #16
+	ldp	x4, x5,   [sp], #16
+	ldp	x6, x7,   [sp], #16
+	ldp	x8, x9,   [sp], #16
+	ldp	x10, x11, [sp], #16
+	ldp	x12, x13, [sp], #16
+	ldp	x14, x15, [sp], #16
+	ldp	x16, x17, [sp], #16
+	ldp	x18, x19, [sp], #16
+	ldp	x20, x21, [sp], #16
+	ldp	x22, x23, [sp], #16
+	ldp	x24, x25, [sp], #16
+	ldp	x26, x27, [sp], #16
+	ldp	x28, x29, [sp], #16
+	ldp	lr, xzr,   [sp], #16
+.endm
+
+.macro  handle_dabt
+	save_callee_saved_regs
+	mov	x1, sp
+	mov	x0, lr
+	bl	handle_host_stage2_fault
+	restore_callee_saved_regs
+	eret
+.endm
+
+	.align 11
+
+.macro enable_stage2_trans t0, t1
+	msr	vttbr_el2, \t1
+	/* Enable stage2 translation */
+	mrs	\t0, hcr_el2
+	orr	\t0, \t0, HCR_VM
+	orr	\t0, \t0, HCR_AMO
+	isb
+	msr	hcr_el2, \t0
+	isb
+	tlbi	vmalle1is
+	dsb	sy
+	ic	ialluis
+.endm
+#endif
+
 .macro do_el2_call
 	/*
 	 * Shuffle the parameters before calling the function
@@ -61,14 +126,39 @@ el1_sync:				// Guest trapped into EL2
 	lsr	x0, x0, #ESR_ELx_EC_SHIFT
 	cmp	x0, #ESR_ELx_EC_HVC64
 	ccmp	x0, #ESR_ELx_EC_HVC32, #4, ne
+#ifndef CONFIG_VERIFIED_KVM
 	b.ne	el1_trap
 
 	mrs	x1, vttbr_el2		// If vttbr is valid, the guest
 	cbnz	x1, el1_hvc_guest	// called HVC
+#else
+	b.eq	4f
+	cmp	x0, #ESR_ELx_EC_DABT_LOW
+	b.eq	5f
+	cmp	x0, #ESR_ELx_EC_IABT_LOW
+	b.ne	el1_trap
+
+5:
+	/* if tpidr_el2 = 0, we know if traps from host kernel! */
+	mrs     x1, tpidr_el2
+	cbnz    x1, el1_trap
+
+	ldp	x0, x1,   [sp], #16
+	handle_dabt
+4:
+	mrs	x1, tpidr_el2
+	cbnz	x1, el1_hvc_guest	// called HVC
+#endif
 
 	/* Here, we're pretty sure the host called HVC. */
 	ldp	x0, x1, [sp], #16
 
+	cmp	x0, #HVC_GET_VECTORS
+	b.ne	2f
+	mrs	x0, vbar_el2
+	eret
+
+2:
 	/* Check for a stub HVC call */
 	cmp	x0, #HVC_STUB_HCALL_NR
 	b.hs	1f
@@ -89,6 +179,13 @@ el1_sync:				// Guest trapped into EL2
 	br	x5
 
 1:
+#ifdef CONFIG_VERIFIED_KVM
+	save_callee_saved_regs
+	mov	x0, sp
+	bl	handle_host_hvc
+	restore_callee_saved_regs
+	eret
+#else
 	/*
 	 * Perform the EL2 call
 	 */
@@ -96,6 +193,7 @@ el1_sync:				// Guest trapped into EL2
 	do_el2_call
 
 	eret
+#endif
 
 el1_hvc_guest:
 	/*
@@ -148,17 +246,29 @@ wa_epilogue:
 	eret
 
 el1_trap:
+#ifndef CONFIG_VERIFIED_KVM
 	get_vcpu_ptr	x1, x0
+#else
+	mrs	x1, tpidr_el2
+#endif
 	mov	x0, #ARM_EXCEPTION_TRAP
 	b	__guest_exit
 
 el1_irq:
+#ifndef CONFIG_VERIFIED_KVM
 	get_vcpu_ptr	x1, x0
+#else
+	mrs	x1, tpidr_el2
+#endif
 	mov	x0, #ARM_EXCEPTION_IRQ
 	b	__guest_exit
 
 el1_error:
+#ifndef CONFIG_VERIFIED_KVM
 	get_vcpu_ptr	x1, x0
+#else
+	mrs	x1, tpidr_el2
+#endif
 	mov	x0, #ARM_EXCEPTION_EL1_SERROR
 	b	__guest_exit
 

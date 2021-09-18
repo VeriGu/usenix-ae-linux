@@ -54,6 +54,7 @@ struct iommu_group {
 	int id;
 	struct iommu_domain *default_domain;
 	struct iommu_domain *domain;
+	int vmid;
 };
 
 struct group_device {

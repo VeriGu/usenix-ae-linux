@@ -94,6 +94,9 @@ struct iommu_domain {
 	void *handler_token;
 	struct iommu_domain_geometry geometry;
 	void *iova_cookie;
+#ifdef CONFIG_VERIFIED_KVM
+	int vmid;
+#endif
 };
 
 enum iommu_cap {

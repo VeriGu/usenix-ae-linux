@@ -45,6 +45,11 @@
 
 #include "trace.h"
 
+#ifdef CONFIG_VERIFIED_KVM
+#include <asm/kvm_hyp.h>
+#include <asm/hypsec_host.h>
+#endif
+
 /*
  * All of this file is extremly similar to the ARM coproc.c, but the
  * types are different. My gut feeling is that it should be pretty
@@ -2067,6 +2072,43 @@ int kvm_handle_sys_reg(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		vcpu_set_reg(vcpu, Rt, params.regval);
 	return ret;
 }
+
+#ifdef CONFIG_VERIFIED_KVM
+int __hyp_text find_s2_sys_reg(struct sys_reg_params *params)
+{
+	struct el2_data *el2_data;
+	struct s2_sys_reg_desc *sys_reg_desc;
+	int i = 0;
+
+	el2_data = kern_hyp_va(kvm_ksym_ref(el2_data_start));
+	sys_reg_desc = el2_data->s2_sys_reg_descs;
+
+	do {
+		unsigned long pval = reg_to_match_value(params);
+		if (pval == reg_to_match_value(&sys_reg_desc[i]))
+			return sys_reg_desc[i].reg;
+		i++;
+	} while (i < SHADOW_SYS_REGS_DESC_SIZE);
+
+	return -EINVAL;
+}
+
+int __hyp_text sec_el2_handle_sys_reg(u32 esr)
+{
+	struct sys_reg_params params;
+
+	params.is_aarch32 = false;
+	params.is_32bit = false;
+	params.Op0 = (esr >> 20) & 3;
+	params.Op1 = (esr >> 14) & 0x7;
+	params.CRn = (esr >> 10) & 0xf;
+	params.CRm = (esr >> 1) & 0xf;
+	params.Op2 = (esr >> 17) & 0x7;
+	params.is_write = !(esr & 1);
+
+	return find_s2_sys_reg(&params);
+}
+#endif
 
 /******************************************************************************
  * Userspace API

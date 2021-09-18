@@ -590,6 +590,12 @@ config QCOM_FALKOR_ERRATUM_E1041
 
 endmenu
 
+config VERIFIED_KVM
+	bool "Build verified KVM"
+	select ARM64_4K_PAGES
+	select VIRTUALIZATION
+	help
+	  Build verified KVM.
 
 choice
 	prompt "Page size"

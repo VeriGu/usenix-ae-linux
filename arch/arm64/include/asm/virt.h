@@ -49,6 +49,35 @@
 /* Max number of HYP stub hypercalls */
 #define HVC_STUB_HCALL_NR 3
 
+#define HVC_GET_VECTORS	5
+
+#ifdef CONFIG_VERIFIED_KVM
+#define HVC_ENABLE_S2_TRANS 6
+#define HVC_TIMER_SET_CNTVOFF 7
+#define HVC_VCPU_RUN 8
+#define HVC_CLEAR_VM_S2_RANGE 9
+/* VM BOOT */
+#define HVC_SET_BOOT_INFO 10
+#define HVC_REMAP_VM_IMAGE 11
+#define HVC_VERIFY_VM_IMAGES 12
+/* VM INIT */
+#define HVC_REGISTER_KVM 13
+#define HVC_REGISTER_VCPU 14
+/* VM MGMT */
+#define HVC_BOOT_FROM_SAVED_VM 19
+#define HVC_ENCRYPT_BUF 20
+#define HVC_DECRYPT_BUF 21
+#define HVC_SAVE_CRYPT_VCPU 22
+#define HVC_LOAD_CRYPT_VCPU 29
+/* SMMU */
+#define HVC_SMMU_FREE_PGD 23
+#define HVC_SMMU_ALLOC_PGD 24
+#define HVC_SMMU_LPAE_MAP 25
+#define HVC_SMMU_LPAE_IOVA_TO_PHYS 26
+#define HVC_SMMU_CLEAR 27
+#define	HVC_PHYS_ADDR_IOREMAP 28
+#endif
+
 /* Error returned when an invalid stub number is passed into x0 */
 #define HVC_STUB_ERR	0xbadca11
 
@@ -75,6 +104,10 @@ extern u32 __boot_cpu_mode[2];
 
 void __hyp_set_vectors(phys_addr_t phys_vector_base);
 void __hyp_reset_vectors(void);
+phys_addr_t __hyp_get_vectors(void);
+#ifdef CONFIG_VERIFIED_KVM
+void enable_stage2_translation(phys_addr_t vttbr_base);
+#endif
 
 /* Reports the availability of HYP mode */
 static inline bool is_hyp_mode_available(void)

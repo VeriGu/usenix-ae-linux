@@ -441,7 +441,11 @@ static void set_cntvoff(u64 cntvoff)
 	 * a 64-bit value as an argument, but have to split the value in two
 	 * 32-bit halves.
 	 */
+#ifndef CONFIG_VERIFIED_KVM
 	kvm_call_hyp(__kvm_timer_set_cntvoff, low, high);
+#else
+	kvm_call_core(HVC_TIMER_SET_CNTVOFF, low, high);
+#endif
 }
 
 static inline void set_vtimer_irq_phys_active(struct kvm_vcpu *vcpu, bool active)

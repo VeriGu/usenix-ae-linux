@@ -61,6 +61,11 @@ config KVM_ARM_PMU
 config KVM_INDIRECT_VECTORS
        def_bool KVM && (HARDEN_BRANCH_PREDICTOR || HARDEN_EL2_VECTORS)
 
+config KVM_ARM_PVOPS
+	bool "PVOPS for the guest kernel"
+	---help---
+	Adds PVOPS support for the super secure KVM ARM.
+
 source drivers/vhost/Kconfig
 
 endif # VIRTUALIZATION

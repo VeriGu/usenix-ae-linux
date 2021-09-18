@@ -40,6 +40,9 @@
 #include <kvm/arm_vgic.h>
 #include <kvm/arm_arch_timer.h>
 #include <kvm/arm_pmu.h>
+#ifdef CONFIG_VERIFIED_KVM
+#include <asm/hypsec_mmu.h>
+#endif
 
 #define KVM_MAX_VCPUS VGIC_V3_MAX_CPUS
 
@@ -79,6 +82,9 @@ struct kvm_arch {
 
 	/* Mandated version of PSCI */
 	u32 psci_version;
+#ifdef CONFIG_VERIFIED_KVM
+	bool resume_inc_exe;
+#endif
 };
 
 #define KVM_NR_MEM_OBJS     40
@@ -207,7 +213,47 @@ struct kvm_cpu_context {
 
 typedef struct kvm_cpu_context kvm_cpu_context_t;
 
+#ifdef CONFIG_VERIFIED_KVM
+#define	DIRTY_PC_FLAG			1UL << 32
+#define	PENDING_DABT_INJECT		1UL << 33
+#define	PENDING_IABT_INJECT		1UL << 34
+#define	PENDING_UNDEF_INJECT		1UL << 35
+#define PENDING_FSC_FAULT		1UL << 1
+#define PENDING_EXCEPT_INJECT_FLAG	(PENDING_DABT_INJECT | \
+					 PENDING_IABT_INJECT | \
+					 PENDING_UNDEF_INJECT)
+//#define KVM_REGS_SIZE	(sizeof(struct kvm_regs) - sizeof(struct user_fpsimd_state)) / sizeof(u64)
+#define KVM_REGS_SIZE	7 + sizeof(struct user_pt_regs) / sizeof(u64) 
+
+struct shadow_vcpu_context {
+	struct kvm_regs gp_regs;
+	/*union {
+		u64 sys_regs[NR_SYS_REGS];
+		u32 copro[NR_COPRO_REGS];
+	};*/
+	//u64 regs[KVM_REGS_SIZE];
+	u64 far_el2;
+	u64 hpfar;
+	u64 hcr_el2;
+	u64 ec;
+	u64 dirty;	
+	u64 flags;
+	union {
+		u64 sys_regs[NR_SYS_REGS];
+		u32 copro[NR_COPRO_REGS];
+	};
+	struct user_fpsimd_state fp_regs;
+	u32 esr;
+	u32 vmid;
+};
+#endif
+
 struct kvm_vcpu_arch {
+#ifdef CONFIG_VERIFIED_KVM
+	u32 vmid;
+	bool was_preempted;
+	struct s2_trans walk_result;
+#endif
 	struct kvm_cpu_context ctxt;
 
 	/* HYP configuration */
@@ -318,6 +364,10 @@ struct kvm_vcpu_arch {
  */
 #define __vcpu_sys_reg(v,r)	((v)->arch.ctxt.sys_regs[(r)])
 
+#if 0
+#define vcpu_shadow_gp_regs(v)	(&(v)->gp_regs)
+#endif
+
 u64 vcpu_read_sys_reg(struct kvm_vcpu *vcpu, int reg);
 void vcpu_write_sys_reg(struct kvm_vcpu *vcpu, u64 val, int reg);
 
@@ -366,6 +416,9 @@ void kvm_arm_resume_guest(struct kvm *kvm);
 
 u64 __kvm_call_hyp(void *hypfn, ...);
 #define kvm_call_hyp(f, ...) __kvm_call_hyp(kvm_ksym_ref(f), ##__VA_ARGS__)
+#ifdef CONFIG_VERIFIED_KVM
+#define kvm_call_core(n, ...) __kvm_call_hyp((void *)n, ##__VA_ARGS__)
+#endif
 
 void force_vm_exit(const cpumask_t *mask);
 void kvm_mmu_wp_memory_region(struct kvm *kvm, int slot);
@@ -387,7 +440,9 @@ static inline void __cpu_init_hyp_mode(phys_addr_t pgd_ptr,
 				       unsigned long hyp_stack_ptr,
 				       unsigned long vector_ptr)
 {
+#ifndef CONFIG_VERIFIED_KVM
 	u64 tpidr_el2;
+#endif
 
 	/*
 	 * Call initialization code, and switch to the full blown HYP code.
@@ -398,6 +453,7 @@ static inline void __cpu_init_hyp_mode(phys_addr_t pgd_ptr,
 	BUG_ON(!static_branch_likely(&arm64_const_caps_ready));
 	__kvm_call_hyp((void *)pgd_ptr, hyp_stack_ptr, vector_ptr);
 
+#ifndef CONFIG_VERIFIED_KVM
 	/*
 	 * Calculate the raw per-cpu offset without a translation from the
 	 * kernel's mapping to the linear mapping, and store it in tpidr_el2
@@ -407,7 +463,16 @@ static inline void __cpu_init_hyp_mode(phys_addr_t pgd_ptr,
 		- (u64)kvm_ksym_ref(kvm_host_cpu_state);
 
 	kvm_call_hyp(__kvm_set_tpidr_el2, tpidr_el2);
+#endif
 }
+
+#ifdef CONFIG_VERIFIED_KVM
+static inline u64 get_host_tpidr_el2(void)
+{
+	return (u64)this_cpu_ptr(&kvm_host_cpu_state)
+		- (u64)kvm_ksym_ref(kvm_host_cpu_state);
+}
+#endif
 
 static inline bool kvm_arch_check_sve_has_vhe(void)
 {
@@ -442,10 +507,12 @@ int kvm_arm_vcpu_arch_has_attr(struct kvm_vcpu *vcpu,
 
 static inline void __cpu_init_stage2(void)
 {
+#ifndef CONFIG_VERIFIED_KVM
 	u32 parange = kvm_call_hyp(__init_stage2_translation);
 
 	WARN_ONCE(parange < 40,
 		  "PARange is %d bits, unsupported configuration!", parange);
+#endif
 }
 
 /* Guest/host FPSIMD coordination helpers */

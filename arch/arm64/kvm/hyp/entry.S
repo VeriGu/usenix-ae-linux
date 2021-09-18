@@ -54,7 +54,7 @@
  *		     struct kvm_cpu_context *host_ctxt);
  */
 ENTRY(__guest_enter)
-	// x0: vcpu
+	// x0: shadow vcpu context
 	// x1: host context
 	// x2-x17: clobbered by macros
 	// x18: guest context
@@ -62,7 +62,13 @@ ENTRY(__guest_enter)
 	// Store the host regs
 	save_callee_saved_regs x1
 
+#ifndef CONFIG_VERIFIED_KVM
 	add	x18, x0, #VCPU_CONTEXT
+#else
+	// Store the host_ctxt for use at exit time
+	str	x1, [sp, #-16]!
+	mov	x18, x0
+#endif
 
 	// Restore guest regs x0-x17
 	ldp	x0, x1,   [x18, #CPU_XREG_OFFSET(0)]
@@ -87,11 +93,13 @@ ENDPROC(__guest_enter)
 
 ENTRY(__guest_exit)
 	// x0: return code
-	// x1: vcpu
+	// x1: shadow vcpu context
 	// x2-x29,lr: vcpu regs
 	// vcpu x0-x1 on the stack
 
+#ifndef CONFIG_VERIFIED_KVM
 	add	x1, x1, #VCPU_CONTEXT
+#endif
 
 	ALTERNATIVE(nop, SET_PSTATE_PAN(1), ARM64_HAS_PAN, CONFIG_ARM64_PAN)
 
@@ -115,7 +123,12 @@ ENTRY(__guest_exit)
 	// Store the guest regs x19-x29, lr
 	save_callee_saved_regs x1
 
+#ifndef CONFIG_VERIFIED_KVM
 	get_host_ctxt	x2, x3
+#else
+	// Restore the host_ctxt from the stack
+	ldr	x2, [sp], #16
+#endif
 
 	// Now restore the host regs
 	restore_callee_saved_regs x2
