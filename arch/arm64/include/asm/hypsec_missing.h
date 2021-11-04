@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 struct kvm* __hyp_text hypsec_vmid_to_kvm(u32 vmid);
 struct kvm_vcpu* __hyp_text hypsec_vcpu_id_to_vcpu(u32 vmid, int vcpu_id);
 struct shadow_vcpu_context* __hyp_text hypsec_vcpu_id_to_shadow_ctxt(u32 vmid, int vcpu_id);

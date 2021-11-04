@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef HYPSEC_HYPSEC_H
 #define HYPSEC_HYPSEC_H
 

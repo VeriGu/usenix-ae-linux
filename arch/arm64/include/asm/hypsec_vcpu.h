@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __ARM_STAGE2_VCPU__
 #define __ARM_STAGE2_VCPU__
 

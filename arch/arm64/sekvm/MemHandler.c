@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #include "hypsec.h"
 
 void __hyp_text el2_clear_vm_stage2_range(u32 vmid, u64 start, u64 size)

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #include "hypsec.h"
 #include "hacl-20/Hacl_Ed25519.h"
 #include "hacl-20/Hacl_AES.h"

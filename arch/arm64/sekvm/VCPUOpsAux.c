@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #include "hypsec.h"
 #include <uapi/linux/psci.h>
 
